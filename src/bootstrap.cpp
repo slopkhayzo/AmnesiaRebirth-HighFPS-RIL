@@ -3,6 +3,7 @@
 #include "camera_hooks.h"
 #include "config.h"
 #include "engine_hooks.h"
+#include "game_build.h"
 #include "gui_cursor.h"
 #include "host_validation.h"
 #include "logger.h"
@@ -150,11 +151,25 @@ DWORD WINAPI BootstrapThread(void* moduleParameter) {
     log::Write(log::Level::info,
                L"Eligible Rebirth PE64 host: machine=" + Hex(validation.machine) +
                    L", imageSize=" + Hex(validation.imageSize) +
-                   L", timestamp=" + Hex(validation.timestamp) +
-                   (validation.testedBuild
-                        ? L" (the tested build)"
-                        : L" (not the tested build; each feature is "
-                          L"accepted only if its game code matches)"));
+                   L", timestamp=" + Hex(validation.timestamp));
+    const build::Build* const gameBuild =
+        build::Select(GetModuleHandleW(nullptr));
+    if (gameBuild == nullptr) {
+        log::Write(log::Level::warning,
+                   L"No supported build matched this executable's "
+                   L"cEngine::Run; every feature will refuse to start.");
+    } else {
+        const bool sameIdentity =
+            gameBuild->timestamp == validation.timestamp &&
+            gameBuild->imageSize == validation.imageSize;
+        log::Write(log::Level::info,
+                   std::wstring(L"Game build: ") + gameBuild->name +
+                       (sameIdentity
+                            ? L" (exact executable the mapping was made from)."
+                            : L" (code matches; timestamp or image size "
+                              L"differ, so each feature still checks its "
+                              L"game code)."));
+    }
 
     config::Features unsupportedFeatures = loaded.settings.features;
     unsupportedFeatures.renderUnlock = false;

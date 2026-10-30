@@ -1,7 +1,7 @@
 #include "gui_cursor.h"
 
+#include "game_build.h"
 #include "iat_hook.h"
-#include "host_validation.h"
 #include "logger.h"
 
 #include <MinHook.h>
@@ -17,10 +17,11 @@
 namespace arb::gui_cursor {
 namespace {
 
+using build::Function;
+
 // cImGui::SendMousePosition(const cVector2l& pos, const cVector2l& rel):
 // once per fixed tick the input handler passes the mouse's window position
 // in pixels; the function converts it to GUI coordinates and stores it.
-constexpr std::uintptr_t kSendMousePositionRva = 0x00437E40U;
 constexpr std::size_t kImGuiMousePositionOffset = 0x4E48U;
 // Previous position (8 bytes) and relative motion (8 bytes) follow the
 // position; the first-update flag sits at +0x4E7E.
@@ -32,11 +33,6 @@ constexpr std::size_t kPreservedBytes = 16U;
 // window, so one agreement (any tick with a resting mouse) is kept.
 constexpr int kAgreementPixels = 3;
 
-constexpr std::array<std::uint8_t, 24> kSendMousePositionEntry{
-    0x48, 0x89, 0x5C, 0x24, 0x20, 0x57, 0x48, 0x83,
-    0xEC, 0x40, 0x8B, 0x81, 0x48, 0x4E, 0x00, 0x00,
-    0x48, 0x8B, 0xF9, 0x89, 0x81, 0x50, 0x4E, 0x00,
-};
 
 struct Pixels {
     int x = 0;
@@ -73,17 +69,11 @@ struct Diagnostics {
 
 // cImGui image draw: appends one 0xA0-byte command to the vector at
 // +0x300/+0x308; the command's position is three floats at +0x08.
-constexpr std::uintptr_t kDrawImageRva = 0x0042F440U;
 constexpr std::size_t kImGuiCommandsBeginOffset = 0x300U;
 constexpr std::size_t kImGuiCommandsEndOffset = 0x308U;
 constexpr std::size_t kCommandSize = 0xA0U;
 constexpr std::size_t kCommandPositionOffset = 0x08U;
 constexpr std::size_t kGraphicOffsetOffset = 0x24U;
-constexpr std::array<std::uint8_t, 24> kDrawImageEntry{
-    0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x18, 0x48,
-    0x89, 0x70, 0x20, 0x55, 0x57, 0x41, 0x54, 0x41,
-    0x56, 0x41, 0x57, 0x48, 0x8D, 0xA8, 0xF8, 0xFE,
-};
 using DrawImage = void(__fastcall*)(std::byte* imGui, void* graphic,
                                     float* position, float* size, void* a,
                                     void* b, void* c, void* d, void* e);
@@ -121,8 +111,8 @@ struct CommandList {
     bool holdsCursor = false;
 };
 // Images (0xA0-byte commands at +0x300, position at +0x08) and text
-// (0x58-byte commands at +0x318, position at +0x28, appended by RVA
-// 0x42D6E0).
+// (0x58-byte commands at +0x318, position at +0x28, appended by GOG RVA
+// 0x42D6E0, Steam RVA 0x43C510).
 constexpr CommandList kImageList{0x300U, 0x308U, 0xA0U, 0x08U, true};
 constexpr CommandList kTextList{0x318U, 0x320U, 0x58U, 0x28U, false};
 struct FollowState {
@@ -142,13 +132,7 @@ std::uint64_t g_snapshotSerial = 0;
 
 using DoMouse = void(__fastcall*)(std::byte* imGui, void* graphic,
                                   float* offset, void* size);
-// cImGui::DoMouse: queues the cursor graphic.
-constexpr std::uintptr_t kDoMouseRva = 0x0042A200U;
-constexpr std::array<std::uint8_t, 24> kDoMouseEntry{
-    0x48, 0x8B, 0xC4, 0x41, 0x54, 0x41, 0x56, 0x41,
-    0x57, 0x48, 0x81, 0xEC, 0xC0, 0x00, 0x00, 0x00,
-    0x80, 0xB9, 0xA9, 0x06, 0x00, 0x00, 0x00, 0x4D,
-};
+// cImGui::DoMouse (Function::doMouse) queues the cursor graphic.
 DoMouse g_originalDoMouse = nullptr;
 std::byte* g_refreshedImGui = nullptr;
 std::uint64_t g_refreshedTick = 0;
@@ -563,8 +547,8 @@ bool Start(const HMODULE executable, const bool diagnosticsEnabled,
         return false;
     }
     auto* const base = reinterpret_cast<std::byte*>(executable);
-    std::byte* const target = base + kSendMousePositionRva;
-    if (!host::AddressMatches(target, kSendMousePositionEntry.data(), kSendMousePositionEntry.size())) {
+    std::byte* const target = base + build::Rva(Function::sendMousePosition);
+    if (!build::EntryMatches(executable, Function::sendMousePosition)) {
         error = L"GUI mouse-position entry bytes do not match the supported "
                 L"build.";
         return false;
@@ -601,8 +585,8 @@ bool Start(const HMODULE executable, const bool diagnosticsEnabled,
     }
     // Optional second detour; without it the refreshed position still
     // reaches scripts but the cursor graphic keeps its stock position.
-    std::byte* const doMouseTarget = base + kDoMouseRva;
-    if (host::AddressMatches(doMouseTarget, kDoMouseEntry.data(), kDoMouseEntry.size()) &&
+    std::byte* const doMouseTarget = base + build::Rva(Function::doMouse);
+    if (build::EntryMatches(executable, Function::doMouse) &&
         MH_CreateHook(doMouseTarget, reinterpret_cast<void*>(&DoMouseHook),
                       reinterpret_cast<void**>(&g_originalDoMouse)) == MH_OK) {
         if (MH_EnableHook(doMouseTarget) != MH_OK) {
@@ -614,8 +598,8 @@ bool Start(const HMODULE executable, const bool diagnosticsEnabled,
         log::Write(log::Level::warning,
                    L"GUI cursor preview: cursor-draw detour unavailable.");
     }
-    std::byte* const drawImageTarget = base + kDrawImageRva;
-    if (host::AddressMatches(drawImageTarget, kDrawImageEntry.data(), kDrawImageEntry.size()) &&
+    std::byte* const drawImageTarget = base + build::Rva(Function::drawImage);
+    if (build::EntryMatches(executable, Function::drawImage) &&
         MH_CreateHook(drawImageTarget,
                       reinterpret_cast<void*>(&DrawImageHook),
                       reinterpret_cast<void**>(&g_originalDrawImage)) ==
@@ -636,17 +620,22 @@ bool Start(const HMODULE executable, const bool diagnosticsEnabled,
 void Stop() noexcept {
     g_enabled = false;
     if (g_executableBase != nullptr && g_originalSendMousePosition != nullptr) {
-        std::byte* const target = g_executableBase + kSendMousePositionRva;
+        std::byte* const target =
+            g_executableBase + build::Rva(Function::sendMousePosition);
         static_cast<void>(MH_DisableHook(target));
         static_cast<void>(MH_RemoveHook(target));
     }
     if (g_executableBase != nullptr && g_originalDoMouse != nullptr) {
-        static_cast<void>(MH_DisableHook(g_executableBase + kDoMouseRva));
-        static_cast<void>(MH_RemoveHook(g_executableBase + kDoMouseRva));
+        std::byte* const doMouseTarget =
+            g_executableBase + build::Rva(Function::doMouse);
+        static_cast<void>(MH_DisableHook(doMouseTarget));
+        static_cast<void>(MH_RemoveHook(doMouseTarget));
     }
     if (g_executableBase != nullptr && g_originalDrawImage != nullptr) {
-        static_cast<void>(MH_DisableHook(g_executableBase + kDrawImageRva));
-        static_cast<void>(MH_RemoveHook(g_executableBase + kDrawImageRva));
+        std::byte* const drawImageTarget =
+            g_executableBase + build::Rva(Function::drawImage);
+        static_cast<void>(MH_DisableHook(drawImageTarget));
+        static_cast<void>(MH_RemoveHook(drawImageTarget));
     }
     g_originalDrawImage = nullptr;
     g_anchoredCount = 0;

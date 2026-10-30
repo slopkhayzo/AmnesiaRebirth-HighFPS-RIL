@@ -1,6 +1,6 @@
 #include "particle_hooks.h"
 
-#include "host_validation.h"
+#include "game_build.h"
 #include "logger.h"
 
 #include <MinHook.h>
@@ -16,13 +16,13 @@
 namespace arb::particle_hooks {
 namespace {
 
-// cParticleEmitter_UserData::UpdateMotion (vtable +0x178): once per fixed
-// tick it copies every live particle's position to its previous-position
-// field and then advances the position.
-constexpr std::uintptr_t kUpdateMotionRva = 0x0055AFE0U;
-// The emitter's per-viewport graphics update (vtable +0x68): builds the
-// billboards from the particle positions each time a viewport is drawn.
-constexpr std::uintptr_t kUpdateGraphicsRva = 0x00553EB0U;
+// Function::particleUpdateMotion is cParticleEmitter_UserData::UpdateMotion
+// (vtable +0x178): once per fixed tick it copies every live particle's
+// position to its previous-position field and then advances the position.
+// Function::particleUpdateGraphics is the emitter's per-viewport graphics
+// update (vtable +0x68): it builds the billboards from the particle positions
+// each time a viewport is drawn.
+using build::Function;
 constexpr std::size_t kEmitterParticlesOffset = 0x1E0U;
 constexpr std::size_t kEmitterLiveCountOffset = 0x1F8U;
 constexpr std::size_t kEmitterMaximumCountOffset = 0x1FCU;
@@ -33,17 +33,6 @@ constexpr std::size_t kEmitterSlots = 2048U;
 constexpr std::size_t kProbeLength = 8U;
 // A larger single-tick move is a respawn or teleport, not motion to blend.
 constexpr float kMaximumStepSquared = 25.0F;
-
-constexpr std::array<std::uint8_t, 24> kUpdateMotionEntry{
-    0x40, 0x55, 0x41, 0x56, 0x48, 0x8D, 0xAC, 0x24,
-    0xB8, 0xFD, 0xFF, 0xFF, 0x48, 0x81, 0xEC, 0x48,
-    0x03, 0x00, 0x00, 0x48, 0x8B, 0x81, 0x38, 0x03,
-};
-constexpr std::array<std::uint8_t, 24> kUpdateGraphicsEntry{
-    0x48, 0x8B, 0xC4, 0x55, 0x53, 0x56, 0x57, 0x41,
-    0x54, 0x41, 0x56, 0x48, 0x8D, 0xA8, 0x68, 0xFE,
-    0xFF, 0xFF, 0x48, 0x81, 0xEC, 0x68, 0x02, 0x00,
-};
 
 using UpdateMotion = void(__fastcall*)(std::byte* emitter, float timeStep);
 using UpdateGraphics = std::uintptr_t(__fastcall*)(std::byte* emitter,
@@ -336,10 +325,12 @@ bool Start(const HMODULE executable, const bool diagnosticsEnabled,
         return false;
     }
     auto* const base = reinterpret_cast<std::byte*>(executable);
-    std::byte* const motionTarget = base + kUpdateMotionRva;
-    std::byte* const graphicsTarget = base + kUpdateGraphicsRva;
-    if (!host::AddressMatches(motionTarget, kUpdateMotionEntry.data(), kUpdateMotionEntry.size()) ||
-        !host::AddressMatches(graphicsTarget, kUpdateGraphicsEntry.data(), kUpdateGraphicsEntry.size())) {
+    std::byte* const motionTarget =
+        base + build::Rva(Function::particleUpdateMotion);
+    std::byte* const graphicsTarget =
+        base + build::Rva(Function::particleUpdateGraphics);
+    if (!build::EntryMatches(executable, Function::particleUpdateMotion) ||
+        !build::EntryMatches(executable, Function::particleUpdateGraphics)) {
         error = L"Particle emitter entry bytes do not match the supported "
                 L"build.";
         return false;
@@ -387,7 +378,9 @@ void Stop() noexcept {
     g_enabled.store(false, std::memory_order_release);
     g_renderActive.store(false, std::memory_order_release);
     if (g_executableBase != nullptr) {
-        for (const std::uintptr_t rva : {kUpdateGraphicsRva, kUpdateMotionRva}) {
+        for (const Function function : {Function::particleUpdateGraphics,
+                                        Function::particleUpdateMotion}) {
+            const std::uintptr_t rva = build::Rva(function);
             static_cast<void>(MH_DisableHook(g_executableBase + rva));
             static_cast<void>(MH_RemoveHook(g_executableBase + rva));
         }

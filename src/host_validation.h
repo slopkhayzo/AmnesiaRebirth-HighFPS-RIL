@@ -14,8 +14,6 @@ struct ValidationResult {
     std::uint16_t machine = 0;
     std::uint32_t imageSize = 0;
     std::uint32_t timestamp = 0;
-    // True for the exact executable the fix was developed against.
-    bool testedBuild = false;
 };
 
 [[nodiscard]] ValidationResult Validate(HMODULE executable);

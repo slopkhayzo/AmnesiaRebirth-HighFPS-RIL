@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(
     AmnesiaRebirthFpsFix
-    VERSION 1.0.0
+    VERSION 1.1.0
     DESCRIPTION "High-frame-rate presentation fix for Amnesia: Rebirth"
     LANGUAGES C CXX
 )
@@ -47,6 +47,7 @@ add_library(AmnesiaRebirthFpsFix MODULE
     src/engine_hooks.cpp
     src/frame_cadence.cpp
     src/frame_limiter.cpp
+    src/game_build.cpp
     src/gui_cursor.cpp
     src/host_validation.cpp
     src/iat_hook.cpp
@@ -255,6 +256,36 @@ if(BUILD_TESTING)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
     )
     add_test(NAME iat_hook COMMAND iat_hook_tests)
+
+    set(AR_GOG_EXECUTABLE "" CACHE FILEPATH
+        "Optional GOG AmnesiaRebirth.exe checked against the build table")
+    set(AR_STEAM_EXECUTABLE "" CACHE FILEPATH
+        "Optional Steam AmnesiaRebirth.exe checked against the build table")
+    set(AR_GAME_BUILD_TEST_ARGS)
+    if(AR_GOG_EXECUTABLE AND EXISTS "${AR_GOG_EXECUTABLE}")
+        list(APPEND AR_GAME_BUILD_TEST_ARGS "GOG=${AR_GOG_EXECUTABLE}")
+    endif()
+    if(AR_STEAM_EXECUTABLE AND EXISTS "${AR_STEAM_EXECUTABLE}")
+        list(APPEND AR_GAME_BUILD_TEST_ARGS "Steam=${AR_STEAM_EXECUTABLE}")
+    endif()
+    add_executable(game_build_tests
+        tests/game_build_tests.cpp
+        src/game_build.cpp
+        src/host_validation.cpp
+    )
+    target_include_directories(game_build_tests PRIVATE src)
+    target_compile_features(game_build_tests PRIVATE cxx_std_20)
+    target_compile_definitions(game_build_tests PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        UNICODE
+        _UNICODE
+    )
+    target_compile_options(game_build_tests PRIVATE ${AR_COMMON_COMPILE_OPTIONS})
+    set_property(TARGET game_build_tests PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    )
+    add_test(NAME game_build COMMAND game_build_tests ${AR_GAME_BUILD_TEST_ARGS})
 
     add_executable(minhook_tests tests/minhook_tests.cpp)
     target_compile_features(minhook_tests PRIVATE cxx_std_20)

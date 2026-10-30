@@ -21,9 +21,10 @@ What it smooths
 
 Requirements
 ------------
-- Amnesia: Rebirth for Windows. Developed and tested on the GOG build only.
-  At startup the fix checks the game code it depends on and switches itself
-  off, entirely or only for the affected feature, if anything does not match.
+- Amnesia: Rebirth for Windows, GOG or Steam. Developed on the GOG build; the
+  Steam build has had less play time. At startup the fix checks the game code
+  it depends on and switches itself off, entirely or only for the affected
+  feature, if anything does not match.
 - VSync, an external frame limiter, or the optional limiter in the INI. The
   fix does not cap the frame rate by default.
 - For the most direct mouse look, turn Smooth Mouse off in the game's input
@@ -34,7 +35,8 @@ Installation
 Place all files beside AmnesiaRebirth.exe. The included version.dll is the
 x64 Ultimate ASI Loader v9.7.4, which loads AmnesiaRebirth.FPSFix.asi when the
 game starts. If a version.dll is already there, find out what it belongs to
-and back it up before replacing it.
+and back it up before replacing it. On Steam, that folder opens from the game's
+Properties > Installed Files > Browse; then start the game with Play as usual.
 
 Settings
 --------
@@ -50,6 +52,7 @@ Not covered
 - In scenes where the game animates the camera, such as the plane seat at
   the start, mouse look is smoothed but stays one simulation step behind.
 - The cursor on in-world terminal screens is not smoothed.
+- Steam's AmnesiaRebirth_NoSteam.exe is not supported; the fix stays off there.
 - The game has not been tested to the end with this version.
 - Mods and custom stories are untested.
 

@@ -2,8 +2,8 @@
 
 #include "camera_interpolation.h"
 #include "engine_hooks.h"
+#include "game_build.h"
 #include "gui_cursor.h"
-#include "host_validation.h"
 #include "logger.h"
 #include "mouse_hooks.h"
 #include "particle_hooks.h"
@@ -25,11 +25,7 @@
 namespace arb::camera_hooks {
 namespace {
 
-constexpr std::uintptr_t kUpdaterRunMessageRva = 0x00319FD0U;
-constexpr std::uintptr_t kViewportRenderRva = 0x003B5AD0U;
-constexpr std::uintptr_t kSetPositionRva = 0x0038D640U;
-constexpr std::uintptr_t kSetRotationMatrixRva = 0x0038D710U;
-constexpr std::uintptr_t kCurrentMicrosecondsRva = 0x003113A0U;
+using build::Function;
 
 constexpr std::size_t kViewportCameraOffset = 0x18U;
 constexpr std::size_t kViewportWorldOffset = 0x20U;
@@ -51,31 +47,6 @@ constexpr std::size_t kLogicTimerSpeedMultiplierOffset = 0x30U;
 constexpr int kEulerRotateMode = 0;
 constexpr int kMatrixRotateMode = 1;
 constexpr int kPostUpdateMessage = 5;
-
-constexpr std::array<std::uint8_t, 24> kUpdaterRunMessageEntry{
-    0x40, 0x55, 0x41, 0x54, 0x41, 0x55, 0x41, 0x57,
-    0x48, 0x8B, 0xEC, 0x48, 0x83, 0xEC, 0x78, 0x45,
-    0x33, 0xED, 0x0F, 0x29, 0x74, 0x24, 0x60, 0x44,
-};
-constexpr std::array<std::uint8_t, 24> kViewportRenderEntry{
-    0x48, 0x89, 0x5C, 0x24, 0x18, 0x55, 0x56, 0x57,
-    0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57,
-    0x48, 0x83, 0xEC, 0x50, 0x48, 0x8B, 0x9A, 0x80,
-};
-constexpr std::array<std::uint8_t, 16> kCurrentMicrosecondsEntry{
-    0x48, 0x83, 0xEC, 0x28, 0xE8, 0xB5, 0x01, 0x46,
-    0x00, 0x48, 0x2B, 0x05, 0x38, 0x83, 0x63, 0x00,
-};
-constexpr std::array<std::uint8_t, 24> kSetPositionEntry{
-    0x8B, 0x02, 0x4C, 0x8D, 0x41, 0x10, 0x41, 0x89,
-    0x00, 0x8B, 0x42, 0x04, 0x41, 0x89, 0x40, 0x04,
-    0x8B, 0x42, 0x08, 0x49, 0x8B, 0xD0, 0x41, 0x89,
-};
-constexpr std::array<std::uint8_t, 24> kSetRotationMatrixEntry{
-    0x0F, 0x10, 0x02, 0x0F, 0x11, 0x81, 0xF8, 0x01,
-    0x00, 0x00, 0x0F, 0x10, 0x4A, 0x10, 0x0F, 0x11,
-    0x89, 0x08, 0x02, 0x00, 0x00, 0x0F, 0x10, 0x42,
-};
 
 using UpdaterRunMessage = void(__fastcall*)(void* updater, int message,
                                              float timeStep);
@@ -588,11 +559,6 @@ void __fastcall ViewportRenderHook(void* const scene, std::byte* const viewport,
     }
 }
 
-bool Matches(const std::byte* const address,
-             const std::array<std::uint8_t, 24>& signature) noexcept {
-    return host::AddressMatches(address, signature.data(), signature.size());
-}
-
 } // namespace
 
 bool Start(const HMODULE executable, std::wstring& error) noexcept {
@@ -601,15 +567,19 @@ bool Start(const HMODULE executable, std::wstring& error) noexcept {
         return false;
     }
     auto* const base = reinterpret_cast<std::byte*>(executable);
-    auto* const updaterTarget = base + kUpdaterRunMessageRva;
-    auto* const viewportTarget = base + kViewportRenderRva;
-    auto* const setRotationMatrixTarget = base + kSetRotationMatrixRva;
-    auto* const currentMicrosecondsTarget = base + kCurrentMicrosecondsRva;
-    if (!Matches(updaterTarget, kUpdaterRunMessageEntry) ||
-        !Matches(viewportTarget, kViewportRenderEntry) ||
-        !Matches(setRotationMatrixTarget, kSetRotationMatrixEntry) ||
-        !Matches(base + kSetPositionRva, kSetPositionEntry) ||
-        !host::AddressMatches(currentMicrosecondsTarget, kCurrentMicrosecondsEntry.data(), kCurrentMicrosecondsEntry.size())) {
+    auto* const updaterTarget = base + build::Rva(Function::updaterRunMessage);
+    auto* const viewportTarget = base + build::Rva(Function::viewportRender);
+    auto* const setPositionTarget =
+        base + build::Rva(Function::cameraSetPosition);
+    auto* const setRotationMatrixTarget =
+        base + build::Rva(Function::cameraSetRotationMatrix);
+    auto* const currentMicrosecondsTarget =
+        base + build::Rva(Function::currentMicroseconds);
+    if (!build::EntryMatches(executable, Function::updaterRunMessage) ||
+        !build::EntryMatches(executable, Function::viewportRender) ||
+        !build::EntryMatches(executable, Function::cameraSetRotationMatrix) ||
+        !build::EntryMatches(executable, Function::cameraSetPosition) ||
+        !build::EntryMatches(executable, Function::currentMicroseconds)) {
         error = L"Updater or viewport-render entry bytes do not match the "
                 L"supported build, or the scheduler clock is unavailable.";
         return false;
@@ -621,7 +591,7 @@ bool Start(const HMODULE executable, std::wstring& error) noexcept {
         return false;
     }
     g_qpcFrequency = frequency.QuadPart;
-    g_setPosition = reinterpret_cast<SetPosition>(base + kSetPositionRva);
+    g_setPosition = reinterpret_cast<SetPosition>(setPositionTarget);
     g_setRotationMatrix = reinterpret_cast<SetRotationMatrix>(
         setRotationMatrixTarget);
     g_currentMicroseconds = reinterpret_cast<CurrentMicroseconds>(
@@ -670,10 +640,12 @@ void Stop() noexcept {
         return;
     }
     auto* const base = reinterpret_cast<std::byte*>(executable);
-    static_cast<void>(MH_DisableHook(base + kViewportRenderRva));
-    static_cast<void>(MH_DisableHook(base + kUpdaterRunMessageRva));
-    static_cast<void>(MH_RemoveHook(base + kViewportRenderRva));
-    static_cast<void>(MH_RemoveHook(base + kUpdaterRunMessageRva));
+    auto* const viewportTarget = base + build::Rva(Function::viewportRender);
+    auto* const updaterTarget = base + build::Rva(Function::updaterRunMessage);
+    static_cast<void>(MH_DisableHook(viewportTarget));
+    static_cast<void>(MH_DisableHook(updaterTarget));
+    static_cast<void>(MH_RemoveHook(viewportTarget));
+    static_cast<void>(MH_RemoveHook(updaterTarget));
     g_originalViewportRender = nullptr;
     g_originalUpdaterRunMessage = nullptr;
     g_setRotationMatrix = nullptr;

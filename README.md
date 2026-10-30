@@ -17,7 +17,7 @@ simulation states, so motion is smooth at the display's rate while physics,
 scripts, AI, animation timing, and audio are unchanged. Everything it changes
 for a frame is restored before the simulation runs again.
 
-## What `1.0.0` covers
+## What `1.1.0` covers
 
 - Render unlock through the engine's own unlimited-FPS path.
 - Camera interpolation on the listener viewport, in both mouse-driven and
@@ -37,8 +37,13 @@ for a frame is restored before the simulation runs again.
 Not implemented: Verlet/cloth-like simulations, temporal screen effects,
 critters (`cLuxCritter`), and the cursor on in-world terminal screens.
 
+Both Windows builds are supported: GOG's and Steam's `AmnesiaRebirth.exe`. They
+are the same game compiled differently, so `src/game_build.cpp` holds the
+addresses for each, and the fix recognises the build from its code at startup.
 Each layer validates the entry bytes of the game functions it depends on and
-stays off if they do not match. Only the GOG build has been tested.
+stays off if they do not match. Development and most testing were done on GOG;
+the Steam build has had less play time. Steam's `AmnesiaRebirth_NoSteam.exe` is
+not supported, and the fix stays off there.
 
 The private `research/` directory (reverse-engineering notes, validation
 logs, the working plan) is intentionally excluded from Git.
@@ -53,7 +58,9 @@ cmake --build build-x64 --parallel
 ctest --test-dir build-x64 --output-on-failure
 ```
 
-The ASI and INI are emitted under `build-x64/bin`.
+The ASI and INI are emitted under `build-x64/bin`. Configure with
+`-DAR_GOG_EXECUTABLE=<path>` and `-DAR_STEAM_EXECUTABLE=<path>` to also check the
+address table against installed copies of the game.
 
 ## Packaging
 

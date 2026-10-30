@@ -11,9 +11,6 @@
 namespace arb::host {
 namespace {
 
-constexpr std::uint32_t kTestedTimestamp = 0x614063E2U;
-constexpr std::uint32_t kTestedImageSize = 0x009FD000U;
-
 std::wstring ModulePath(const HMODULE module) {
     std::vector<wchar_t> buffer(512);
     for (;;) {
@@ -83,12 +80,8 @@ ValidationResult Validate(const HMODULE executable) {
         result.error = L"Mapped host has an invalid image size.";
         return result;
     }
-    // The build identity is informational only. Compatibility is decided by
-    // each feature checking the entry bytes of the game functions it uses,
-    // so a different build with the same code is accepted and one with
-    // different code is refused feature by feature.
-    result.testedBuild = result.timestamp == kTestedTimestamp &&
-                         result.imageSize == kTestedImageSize;
+    // The build is identified afterwards by its code (build::Select), and
+    // each feature still checks the entry bytes of the functions it uses.
     result.compatible = true;
     return result;
 }

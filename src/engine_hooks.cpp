@@ -1,11 +1,10 @@
 #include "engine_hooks.h"
 
-#include "host_validation.h"
+#include "game_build.h"
 #include "logger.h"
 
 #include <MinHook.h>
 
-#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -15,13 +14,9 @@
 namespace arb::engine {
 namespace {
 
-constexpr std::uintptr_t kEngineRunRva = 0x00318130U;
+using build::Function;
+
 constexpr std::size_t kLimitFpsOffset = 0x88U;
-constexpr std::array<std::uint8_t, 24> kEngineRunEntry{
-    0x40, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41,
-    0x56, 0x48, 0x8D, 0x6C, 0x24, 0xD8, 0x48, 0x81,
-    0xEC, 0x28, 0x01, 0x00, 0x00, 0x48, 0x8B, 0xF1,
-};
 
 using EngineRun = void(__fastcall*)(std::byte* engine);
 
@@ -75,8 +70,9 @@ bool StartRenderUnlock(const HMODULE executable, std::wstring& error) noexcept {
         error = L"Host module is null while installing render unlock.";
         return false;
     }
-    auto* const target = reinterpret_cast<std::byte*>(executable) + kEngineRunRva;
-    if (!host::AddressMatches(target, kEngineRunEntry.data(), kEngineRunEntry.size())) {
+    auto* const target = reinterpret_cast<std::byte*>(executable) +
+                         build::Rva(Function::engineRun);
+    if (!build::EntryMatches(executable, Function::engineRun)) {
         error = L"cEngine::Run entry bytes do not match the supported build.";
         return false;
     }
@@ -111,8 +107,8 @@ void StopRenderUnlock() noexcept {
     if (executable == nullptr) {
         return;
     }
-    auto* const target =
-        reinterpret_cast<std::byte*>(executable) + kEngineRunRva;
+    auto* const target = reinterpret_cast<std::byte*>(executable) +
+                         build::Rva(Function::engineRun);
     static_cast<void>(MH_DisableHook(target));
     static_cast<void>(MH_RemoveHook(target));
     g_originalEngineRun = nullptr;

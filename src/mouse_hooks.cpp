@@ -1,14 +1,13 @@
 #include "mouse_hooks.h"
 
+#include "game_build.h"
 #include "iat_hook.h"
-#include "host_validation.h"
 #include "logger.h"
 #include "mouse_preview.h"
 
 #include <MinHook.h>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -18,11 +17,11 @@
 namespace arb::mouse_hooks {
 namespace {
 
-// cLuxInputHandler look-amount routine: reads the mouse's relative counts,
-// scales them by sensitivity * system mouse speed / screen height, optionally
-// smooths them, and applies vertical inversion.
-constexpr std::uintptr_t kLookAmountRva = 0x001B2DF0U;
-constexpr std::uintptr_t kGameGlobalRva = 0x00956938U;
+// Function::lookAmount is the cLuxInputHandler look-amount routine: it reads
+// the mouse's relative counts, scales them by sensitivity * system mouse
+// speed / screen height, optionally smooths them, and applies vertical
+// inversion.
+using build::Function;
 constexpr std::size_t kGameInputStateOffset = 0xD8U;
 constexpr std::size_t kInputStateSmoothingBypassOffset = 0x40EU;
 constexpr std::size_t kHandlerSmoothMouseOffset = 0x168U;
@@ -32,12 +31,6 @@ constexpr std::size_t kHandlerPreviousSmoothMultiplierOffset = 0x180U;
 constexpr std::size_t kHandlerSmoothListHeadOffset = 0x188U;
 constexpr std::size_t kHandlerSmoothListSizeOffset = 0x190U;
 constexpr std::size_t kListNodeValueOffset = 0x10U;
-
-constexpr std::array<std::uint8_t, 24> kLookAmountEntry{
-    0x40, 0x53, 0x57, 0x48, 0x83, 0xEC, 0x48, 0x48,
-    0x8B, 0xF9, 0x0F, 0x29, 0x74, 0x24, 0x30, 0x48,
-    0x8B, 0x89, 0x28, 0x01, 0x00, 0x00, 0x48, 0x8B,
-};
 
 constexpr float kMaximumScale = 0.1F;
 constexpr float kMinimumScale = 1.0e-7F;
@@ -182,7 +175,7 @@ std::uint32_t __cdecl GetRelativeMouseStateHook(int* const x,
 
 bool SmoothingBypassed() noexcept {
     const std::byte* const game =
-        ReadAt<std::byte*>(g_executableBase, kGameGlobalRva);
+        ReadAt<std::byte*>(g_executableBase, build::GameGlobalRva());
     if (game == nullptr) {
         return false;
     }
@@ -391,11 +384,11 @@ bool Start(const HMODULE executable, const bool diagnosticsEnabled,
         return false;
     }
     auto* const base = reinterpret_cast<std::byte*>(executable);
-    auto* const lookTarget = base + kLookAmountRva;
+    auto* const lookTarget = base + build::Rva(Function::lookAmount);
     LARGE_INTEGER frequency{};
     g_frequency =
         QueryPerformanceFrequency(&frequency) ? frequency.QuadPart : 0;
-    if (!host::AddressMatches(lookTarget, kLookAmountEntry.data(), kLookAmountEntry.size())) {
+    if (!build::EntryMatches(executable, Function::lookAmount)) {
         error = L"Look-amount entry bytes do not match the supported build.";
         return false;
     }
@@ -471,7 +464,8 @@ void Stop() noexcept {
     }
     g_relativeStateSlot = nullptr;
     if (g_executableBase != nullptr && g_originalLookAmount != nullptr) {
-        std::byte* const lookTarget = g_executableBase + kLookAmountRva;
+        std::byte* const lookTarget =
+            g_executableBase + build::Rva(Function::lookAmount);
         static_cast<void>(MH_DisableHook(lookTarget));
         static_cast<void>(MH_RemoveHook(lookTarget));
     }

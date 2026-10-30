@@ -1,5 +1,6 @@
 #include "root_probe.h"
 
+#include "game_build.h"
 #include "logger.h"
 #include "pose_interpolation.h"
 #include "root_interpolation.h"
@@ -20,22 +21,11 @@
 namespace arb::root_probe {
 namespace {
 
-constexpr std::uintptr_t kEntitySetMatrixRva = 0x00155460U;
-constexpr std::uintptr_t kEntitySetVarBoolRva = 0x00155CC0U;
-constexpr std::uintptr_t kEntityGetMatrixRva = 0x002215E0U;
-constexpr std::uintptr_t kEntityVirtualSetMatrixRva = 0x0022ADE0U;
-constexpr std::uintptr_t kMatrixInverseRva = 0x002BC590U;
-constexpr std::uintptr_t kMatrixMultiplyRva = 0x002BCA60U;
-constexpr std::uintptr_t kNodeMatrixChangedRva = 0x00309C90U;
-constexpr std::uintptr_t kBoneSetMatrixRva = 0x002B3890U;
-constexpr std::uintptr_t kEntityNameResolverRva = 0x0018FE90U;
-constexpr std::uintptr_t kNewtonTransformCallbackRva = 0x006DA960U;
-constexpr std::uintptr_t kLuxPropOnUpdateRva = 0x0022B6A0U;
+using build::Function;
+
 // cLuxAgent (AI characters): OnUpdate is vtable slot +0x120, and slot +0xF8
 // is the mesh-entity getter, which returns the field at +0x940. The agent's
 // transform comes from its character body at +0x948, not from prop nodes.
-constexpr std::uintptr_t kLuxAgentOnUpdateRva = 0x000A6E00U;
-constexpr std::uintptr_t kLuxAgentGetMeshRva = 0x0008FBC0U;
 constexpr std::size_t kAgentMeshOffset = 0x940U;
 constexpr std::size_t kVtableGetMeshSlot = 0xF8U;
 constexpr std::size_t kVtableOnUpdateSlot = 0x120U;
@@ -69,70 +59,7 @@ constexpr std::size_t kMinimumArticulatedPropBodies = 0U;
 constexpr std::size_t kMaximumArticulatedPropBodies = 32U;
 constexpr std::size_t kNewtonBodyPointerOffset = 0x2B0U;
 
-constexpr std::array<std::uint8_t, 24> kEntitySetMatrixEntry{
-    0x40, 0x53, 0x48, 0x81, 0xEC, 0xB0, 0x00, 0x00,
-    0x00, 0x48, 0x8B, 0x01, 0x48, 0x8B, 0xD9, 0xC6,
-    0x81, 0xCB, 0x03, 0x00, 0x00, 0x01, 0xFF, 0x90,
-};
-constexpr std::array<std::uint8_t, 24> kEntitySetVarBoolEntry{
-    0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83,
-    0xEC, 0x20, 0x41, 0x0F, 0xB6, 0xF8, 0x48, 0x8B,
-    0xD9, 0xE8, 0x7A, 0xCA, 0xFE, 0xFF, 0x40, 0x84,
-};
-constexpr std::array<std::uint8_t, 24> kEntityGetMatrixEntry{
-    0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B,
-    0x81, 0xF0, 0x08, 0x00, 0x00, 0x48, 0x8B, 0xDA,
-    0x48, 0x2B, 0x81, 0xE8, 0x08, 0x00, 0x00, 0x48,
-};
-constexpr std::array<std::uint8_t, 24> kEntityVirtualSetMatrixEntry{
-    0x48, 0x89, 0x5C, 0x24, 0x10, 0x57, 0x48, 0x81,
-    0xEC, 0x20, 0x01, 0x00, 0x00, 0x48, 0x8B, 0x81,
-    0xF0, 0x08, 0x00, 0x00, 0x48, 0x8B, 0xDA, 0x48,
-};
-constexpr std::array<std::uint8_t, 24> kMatrixInverseEntry{
-    0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83,
-    0xEC, 0x70, 0x48, 0x8B, 0xF9, 0x0F, 0x29, 0x74,
-    0x24, 0x60, 0x48, 0x8B, 0xCA, 0x48, 0x8B, 0xDA,
-};
-constexpr std::array<std::uint8_t, 24> kMatrixMultiplyEntry{
-    0x4C, 0x8B, 0xDC, 0x48, 0x81, 0xEC, 0xA8, 0x00,
-    0x00, 0x00, 0xF3, 0x0F, 0x10, 0x6A, 0x04, 0xF3,
-    0x0F, 0x10, 0x62, 0x08, 0xF3, 0x0F, 0x10, 0x1A,
-};
-constexpr std::array<std::uint8_t, 24> kNodeMatrixChangedEntry{
-    0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x6C,
-    0x24, 0x18, 0x57, 0x48, 0x83, 0xEC, 0x60, 0xFF,
-    0x81, 0xE0, 0x00, 0x00, 0x00, 0x48, 0x8B, 0xF9,
-};
-constexpr std::array<std::uint8_t, 24> kBoneSetMatrixEntry{
-    0x0F, 0x10, 0x02, 0x0F, 0x11, 0x41, 0x3C, 0x0F,
-    0x10, 0x4A, 0x10, 0x0F, 0x11, 0x49, 0x4C, 0x0F,
-    0x10, 0x42, 0x20, 0x0F, 0x11, 0x41, 0x5C, 0x0F,
-};
-constexpr std::array<std::uint8_t, 24> kEntityNameResolverEntry{
-    0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C,
-    0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57,
-    0x48, 0x83, 0xEC, 0x40, 0x48, 0x8B, 0x05, 0x8D,
-};
-constexpr std::array<std::uint8_t, 24> kNewtonTransformCallbackEntry{
-    0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B,
-    0xDA, 0xFF, 0x15, 0xD9, 0xF0, 0x0B, 0x00, 0x8B,
-    0x0B, 0x4C, 0x8B, 0xC0, 0x89, 0x48, 0x48, 0x8B,
-};
-constexpr std::array<std::uint8_t, 24> kLuxPropOnUpdateEntry{
-    0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74,
-    0x24, 0x10, 0x57, 0x48, 0x81, 0xEC, 0x80, 0x00,
-    0x00, 0x00, 0x44, 0x0F, 0x29, 0x44, 0x24, 0x50,
-};
 
-constexpr std::array<std::uint8_t, 24> kLuxAgentOnUpdateEntry{
-    0x40, 0x57, 0x48, 0x83, 0xEC, 0x40, 0xF3, 0x0F,
-    0x58, 0x89, 0xF0, 0x03, 0x00, 0x00, 0xF3, 0x0F,
-    0x10, 0x91, 0xEC, 0x03, 0x00, 0x00, 0x48, 0x8B,
-};
-constexpr std::array<std::uint8_t, 8> kLuxAgentGetMeshEntry{
-    0x48, 0x8B, 0x81, 0x40, 0x09, 0x00, 0x00, 0xC3,
-};
 
 enum class Kind : std::uint32_t {
     other,
@@ -602,11 +529,13 @@ bool Read(const void* const address, T& value) noexcept {
     return true;
 }
 
-template <std::size_t Size>
-bool Matches(const std::byte* const address,
-             const std::array<std::uint8_t, Size>& signature) noexcept {
-    return IsAccessible(address, Size, false) &&
-           std::memcmp(address, signature.data(), Size) == 0;
+std::byte* Target(const Function function) noexcept {
+    return g_executableBase + build::Rva(function);
+}
+
+bool Matches(const Function function) noexcept {
+    return build::EntryMatches(reinterpret_cast<HMODULE>(g_executableBase),
+                               function);
 }
 
 std::wstring Hex(const std::uintptr_t value) {
@@ -848,7 +777,7 @@ bool ValidEntityVtable(std::byte* const entity) noexcept {
            Read(vtable + (0xA0U / sizeof(void*)), getter) &&
            Read(vtable + (0x160U / sizeof(void*)), setter) &&
            getter == reinterpret_cast<void*>(g_entityGetMatrix) &&
-           setter == g_executableBase + kEntityVirtualSetMatrixRva;
+           setter == Target(Function::entityVirtualSetMatrix);
 }
 
 void RegisterInspectionIdentity(std::byte* const entity) noexcept {
@@ -1871,8 +1800,8 @@ bool ValidAgentVtable(std::byte* const entity) noexcept {
            IsAccessible(vtable, kVtableOnUpdateSlot + sizeof(void*), false) &&
            Read(vtable + kVtableGetMeshSlot, getMesh) &&
            Read(vtable + kVtableOnUpdateSlot, onUpdate) &&
-           getMesh == g_executableBase + kLuxAgentGetMeshRva &&
-           onUpdate == g_executableBase + kLuxAgentOnUpdateRva;
+           getMesh == Target(Function::luxAgentGetMesh) &&
+           onUpdate == Target(Function::luxAgentOnUpdate);
 }
 
 bool HasArticulatedBoneTopology(std::byte* const entity,
@@ -3127,50 +3056,43 @@ bool Start(const HMODULE executable, const bool rootInterpolationEnabled,
         return false;
     }
     g_executableBase = reinterpret_cast<std::byte*>(executable);
-    std::byte* const hookTarget = g_executableBase + kEntitySetMatrixRva;
-    std::byte* const setVarBoolTarget =
-        g_executableBase + kEntitySetVarBoolRva;
+    std::byte* const hookTarget = Target(Function::entitySetMatrix);
+    std::byte* const setVarBoolTarget = Target(Function::entitySetVarBool);
     std::byte* const newtonTransformTarget =
-        g_executableBase + kNewtonTransformCallbackRva;
-    std::byte* const luxPropOnUpdateTarget =
-        g_executableBase + kLuxPropOnUpdateRva;
+        Target(Function::newtonTransformCallback);
+    std::byte* const luxPropOnUpdateTarget = Target(Function::luxPropOnUpdate);
     const bool newtonRuntimeEnabled =
         diagnosticsEnabled || worldInterpolationEnabled;
-    if (!Matches(hookTarget, kEntitySetMatrixEntry) ||
+    if (!Matches(Function::entitySetMatrix) ||
         (rootInterpolationEnabled &&
-         !Matches(setVarBoolTarget, kEntitySetVarBoolEntry)) ||
-        !Matches(g_executableBase + kEntityGetMatrixRva,
-                 kEntityGetMatrixEntry) ||
-        !Matches(g_executableBase + kEntityVirtualSetMatrixRva,
-                 kEntityVirtualSetMatrixEntry) ||
-        !Matches(g_executableBase + kMatrixInverseRva, kMatrixInverseEntry) ||
-        !Matches(g_executableBase + kMatrixMultiplyRva, kMatrixMultiplyEntry) ||
-        !Matches(g_executableBase + kNodeMatrixChangedRva,
-                 kNodeMatrixChangedEntry) ||
+         !Matches(Function::entitySetVarBool)) ||
+        !Matches(Function::entityGetMatrix) ||
+        !Matches(Function::entityVirtualSetMatrix) ||
+        !Matches(Function::matrixInverse) ||
+        !Matches(Function::matrixMultiply) ||
+        !Matches(Function::nodeMatrixChanged) ||
         (newtonRuntimeEnabled &&
-         !Matches(newtonTransformTarget, kNewtonTransformCallbackEntry)) ||
+         !Matches(Function::newtonTransformCallback)) ||
         (ragdollPoseInterpolationEnabled &&
-         !Matches(luxPropOnUpdateTarget, kLuxPropOnUpdateEntry)) ||
+         !Matches(Function::luxPropOnUpdate)) ||
         ((poseInterpolationEnabled || ragdollPoseInterpolationEnabled) &&
-         !Matches(g_executableBase + kBoneSetMatrixRva,
-                  kBoneSetMatrixEntry)) ||
+         !Matches(Function::boneSetMatrix)) ||
         (poseInterpolationEnabled &&
-         !Matches(g_executableBase + kEntityNameResolverRva,
-                  kEntityNameResolverEntry))) {
+         !Matches(Function::entityNameResolver))) {
         error = L"Player-root native entry bytes do not match the supported build.";
         g_executableBase = nullptr;
         return false;
     }
     g_entityGetMatrix = reinterpret_cast<EntityGetMatrix>(
-        g_executableBase + kEntityGetMatrixRva);
+        Target(Function::entityGetMatrix));
     g_matrixInverse = reinterpret_cast<MatrixInverse>(
-        g_executableBase + kMatrixInverseRva);
+        Target(Function::matrixInverse));
     g_matrixMultiply = reinterpret_cast<MatrixMultiply>(
-        g_executableBase + kMatrixMultiplyRva);
+        Target(Function::matrixMultiply));
     g_nodeMatrixChanged = reinterpret_cast<NodeMatrixChanged>(
-        g_executableBase + kNodeMatrixChangedRva);
+        Target(Function::nodeMatrixChanged));
     g_boneSetMatrix = reinterpret_cast<BoneSetMatrix>(
-        g_executableBase + kBoneSetMatrixRva);
+        Target(Function::boneSetMatrix));
     g_interpolationEnabled = rootInterpolationEnabled;
     g_poseInterpolationEnabled = poseInterpolationEnabled;
     g_worldInterpolationEnabled = worldInterpolationEnabled;
@@ -3207,8 +3129,7 @@ bool Start(const HMODULE executable, const bool rootInterpolationEnabled,
         error = MinHookError(L"MH_CreateHook(cLuxEntity::SetMatrix)", status);
         return false;
     }
-    std::byte* const resolverTarget =
-        g_executableBase + kEntityNameResolverRva;
+    std::byte* const resolverTarget = Target(Function::entityNameResolver);
     if (poseInterpolationEnabled) {
         status = MH_CreateHook(
             resolverTarget, reinterpret_cast<void*>(&EntityNameResolverHook),
@@ -3327,11 +3248,9 @@ bool Start(const HMODULE executable, const bool rootInterpolationEnabled,
         }
         // Agents share the skeletal path. A mismatch here only leaves AI
         // characters at the fixed rate; props keep working.
-        std::byte* const agentTarget =
-            g_executableBase + kLuxAgentOnUpdateRva;
-        if (!Matches(agentTarget, kLuxAgentOnUpdateEntry) ||
-            !Matches(g_executableBase + kLuxAgentGetMeshRva,
-                     kLuxAgentGetMeshEntry)) {
+        std::byte* const agentTarget = Target(Function::luxAgentOnUpdate);
+        if (!Matches(Function::luxAgentOnUpdate) ||
+            !Matches(Function::luxAgentGetMesh)) {
             log::Write(log::Level::warning,
                        L"cLuxAgent entry bytes do not match the supported "
                        L"build; agent interpolation stays off.");
@@ -3877,39 +3796,36 @@ void Stop() noexcept {
         return;
     }
     EndRender();
-    std::byte* const target = g_executableBase + kEntitySetMatrixRva;
+    std::byte* const target = Target(Function::entitySetMatrix);
     if (g_originalLuxAgentOnUpdate != nullptr) {
-        std::byte* const agentTarget =
-            g_executableBase + kLuxAgentOnUpdateRva;
+        std::byte* const agentTarget = Target(Function::luxAgentOnUpdate);
         static_cast<void>(MH_DisableHook(agentTarget));
         static_cast<void>(MH_RemoveHook(agentTarget));
         g_originalLuxAgentOnUpdate = nullptr;
     }
     if (g_originalLuxPropOnUpdate != nullptr) {
         std::byte* const luxPropOnUpdateTarget =
-            g_executableBase + kLuxPropOnUpdateRva;
+            Target(Function::luxPropOnUpdate);
         static_cast<void>(MH_DisableHook(luxPropOnUpdateTarget));
         static_cast<void>(MH_RemoveHook(luxPropOnUpdateTarget));
         g_originalLuxPropOnUpdate = nullptr;
     }
     if (g_originalEntitySetVarBool != nullptr) {
-        std::byte* const setVarBoolTarget =
-            g_executableBase + kEntitySetVarBoolRva;
+        std::byte* const setVarBoolTarget = Target(Function::entitySetVarBool);
         static_cast<void>(MH_DisableHook(setVarBoolTarget));
         static_cast<void>(MH_RemoveHook(setVarBoolTarget));
         g_originalEntitySetVarBool = nullptr;
     }
     if (g_originalNewtonTransformCallback != nullptr) {
         std::byte* const newtonTransformTarget =
-            g_executableBase + kNewtonTransformCallbackRva;
+            Target(Function::newtonTransformCallback);
         static_cast<void>(MH_DisableHook(newtonTransformTarget));
         static_cast<void>(MH_RemoveHook(newtonTransformTarget));
         g_originalNewtonTransformCallback = nullptr;
         g_newtonBodyGetUserData = nullptr;
     }
     if (g_originalEntityNameResolver != nullptr) {
-        std::byte* const resolverTarget =
-            g_executableBase + kEntityNameResolverRva;
+        std::byte* const resolverTarget = Target(Function::entityNameResolver);
         static_cast<void>(MH_DisableHook(resolverTarget));
         static_cast<void>(MH_RemoveHook(resolverTarget));
         g_originalEntityNameResolver = nullptr;
